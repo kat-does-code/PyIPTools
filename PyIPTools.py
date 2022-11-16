@@ -17,11 +17,6 @@ import atexit
 import os
 
 # Config vars
-ovpn_path_log = "./vpn_log.txt"
-ovpn_path_errlog = "./vpn_errlog.txt"
-ovpn_path_exe = 'C:\\Program Files\\OpenVPN\\bin\\openvpn.exe'
-ovpn_path_config_dir = 'C:\\Program Files\\OpenVPN\\config'
-ovpn_config_file = 'at1.ovpn'
 block_address_ipv4 = "192.168"
 block_address_ipv6 = "fd00"
 
@@ -137,21 +132,6 @@ def print_ovpn_status():
 	print( bcolors.BOLD + "{0}VPN STATUS: {1}".format(bcolors.OKGREEN if is_process_running else bcolors.FAIL, "RUNNING" if is_process_running else "STOPPED") + bcolors.ENDC )
 		
 
-def start_ovpn():
-	global ovpn_process
-	try:
-		cwd = os.getcwd()
-		os.chdir(ovpn_path_config_dir)
-		fErr = open(ovpn_path_errlog, 'ab')
-		fLog = open(ovpn_path_log, 'ab')
-		ovpn_process = subprocess.Popen([ovpn_path_exe, ovpn_config_file], stderr=fErr, stdout=fLog, stdin=sys.stdin)	
-		os.chdir(cwd)
-		atexit.register(ovpn_process.kill())
-		atexit.register(fErr.close)
-		atexit.register(fLog.close)
-	except Exception as e:
-		print(e)
-
 def prep_block_address():
 	global block_address_ipv4_bytes
 	global block_address_ipv6_bytes
@@ -185,7 +165,6 @@ def main(argv):
 	sleep(10)
 	tL = []
 	devices = pcapy.findalldevs()
-	
 	 
 	#start sniffing packets
 	for d in devices:
