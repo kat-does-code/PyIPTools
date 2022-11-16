@@ -1,4 +1,3 @@
-# Python 2
 '''
 Packet sniffer in python using the pcapy python library
  
@@ -11,12 +10,9 @@ import datetime
 import pcapy
 import sys
 import datetime
-import json
 from threading import Thread
 from time import sleep
-from bitarray import bitarray
 import subprocess
-from getpass import getpass
 import atexit
 import os
 
@@ -51,7 +47,7 @@ class Request:
 		self.AuthorityRRs = unpack(">H", packet[8:10])[0]
 		self.AdditionalRRs = unpack(">H", packet[10:12])[0]
 		rest = packet[12:]
-		endQuery = rest.index('\x00')+1
+		endQuery = rest.index(b'\x00')+1
 		self.Query = rest[:endQuery]
 		self.Type = unpack(">H", rest[endQuery:endQuery+2])[0]
 		self.Class = unpack(">H", rest[endQuery+2:endQuery+4])[0]
@@ -63,9 +59,9 @@ class Answer:
 		self.Type = unpack(">H", answer_block[2:4])[0]
 		self.Class = unpack(">H", answer_block[4:6])[0]
 		self.Ttl = unpack(">I", answer_block[6:10])[0]
-		self.DataLength = unpack(">H", answer_block[10:12])[0]
+		self.DataLength = unpack(">H", answer_block[10:12])[0] if len(answer_block) >= 12 else 0
 		self.AnswerLength = 12+self.DataLength
-		self.Address = answer_block[12:self.AnswerLength]
+		self.Address = answer_block[12:self.AnswerLength] if self.DataLength > 0 else ''
 
 class Response(Request):
 	def __init__(self, packet):
@@ -98,14 +94,13 @@ class MyDict:
 		self.nUrls = 0
 
 	def hit(self, url, blocked):
-		if not self.d.has_key(url):
+		if not url in self.d.keys() :
 			self.d.update({url: {'hits': 0, 'lastupdate':  datetime.datetime.now(), 'blocked':blocked}})
 			self.nUrls +=1
 		self.d[url]['hits'] += 1
 		self.d[url]['lastupdate'] = datetime.datetime.now()
 		self.d[url]['blocked'] = blocked
 		
-
 	def draw(self):
 		epoch = datetime.datetime.utcfromtimestamp(0)
 		l = []
@@ -115,8 +110,8 @@ class MyDict:
 			l.append( [k, self.d[k]['hits'], self.d[k]['lastupdate'], self.d[k]['blocked'] ] )
 		l = sorted(l, key=lambda tpl: (tpl[2]-epoch).total_seconds(), reverse=True )
 		
-		print "{0}/{1} blocked ({2}%)".format(blocks, self.nUrls, int((float(blocks)/self.nUrls)*100) if blocks > 0 else 0 )
-		print bcolors.BOLD + "[{0:26}] [{1:7}] ({2}) | {3}".format("TIMESTAMP", "STATUS", "HITS", "DOMAIN") + bcolors.ENDC
+		print( "{0}/{1} blocked ({2}%) [{3}]".format(blocks, self.nUrls, int((float(blocks)/self.nUrls)*100) if blocks > 0 else 0, packets_filtered ) )
+		print( bcolors.BOLD + "[{0:26}] [{1:7}] ({2}) | {3}".format("TIMESTAMP", "STATUS", "HITS", "DOMAIN") + bcolors.ENDC )
 		i = -1
 		for line in l:
 			i+=1
@@ -125,12 +120,13 @@ class MyDict:
 			if line[3]: pl += bcolors.FAIL
 			else: pl += bcolors.OKGREEN
 			pl += "[{0:26}] [{3}] ({1:4}) | {2}".format(str(line[2]), line[1], line[0], "BLOCKED" if line[3] else "ALLOWED" ) + bcolors.ENDC
-			print pl
+			print( pl )
 			
 			if i == 15:
 				break
 		self.lastdraw = datetime.datetime.now()
 
+packets_filtered =0
 urldict = MyDict()
 
 ovpn_process = None
@@ -138,7 +134,7 @@ ovpn_process = None
 def print_ovpn_status():
 	# check if openvpn is running
 	is_process_running = ovpn_process.poll() == None
-	print bcolors.BOLD + "{0}VPN STATUS: {1}".format(bcolors.OKGREEN if is_process_running else bcolors.FAIL, "RUNNING" if is_process_running else "STOPPED") + bcolors.ENDC
+	print( bcolors.BOLD + "{0}VPN STATUS: {1}".format(bcolors.OKGREEN if is_process_running else bcolors.FAIL, "RUNNING" if is_process_running else "STOPPED") + bcolors.ENDC )
 		
 
 def start_ovpn():
@@ -178,13 +174,13 @@ def prep_block_address():
 	block_address_ipv6_bytes = hexArr6
 
 def draw():
-	os.system("cls")
-	print_ovpn_status()
+	os.system("clear")
+	#print_ovpn_status()
 	urldict.draw()
 		
 def main(argv):
 	prep_block_address()
-	start_ovpn()
+	#start_ovpn()
 	
 	sleep(10)
 	tL = []
@@ -193,17 +189,17 @@ def main(argv):
 	 
 	#start sniffing packets
 	for d in devices:
-		print "Found device : " + d
-		t = Thread(target=open_device, args=(d,) )
-		t.start()	
-		tL.append(t)
+		print( "Found device : " + d )
+		if 'eth' in d:
+			print(f"Starting packet filter on {d}.")
+			t = Thread(target=open_device, args=(d,) )
+			t.start()	
+			tL.append(t)
 
-	while(1):
+	while(len(tL) > 0):
 		sleep(5)
 		draw()
-		
-		
-				
+			
 
 def open_device(dev):
 	'''
@@ -223,6 +219,8 @@ def open_device(dev):
 #function to parse a packet
 def parse_packet(packet) :
 	global urldict
+	global packets_filtered
+	packets_filtered += 1
 	 
 	#parse ethernet header
 	eth_length = 14
@@ -275,19 +273,21 @@ def parse_packet(packet) :
 			try:
 				data = packet[h_size:]
 				r = Response(data)
-				data_mapped = "".join(map(lambda c: datafilter(c), r.Query))
+				data_mapped = "".join(map(datafilter, r.Query))
 				urldict.hit(data_mapped.strip('.'), r.is_blocked())
-			except TypeError:
+			except TypeError as e:
+				print(e)
 				pass
 		#some other IP packet like IGMP
 		else :
-			print 'Protocol other than UDP.'
+			print( 'Protocol other than UDP.' )
 			 
  
 def datafilter(c):
-  if c.lower() not in "qwertyuiopasdfghjklzxzcvbnm":
-	return '.'
-  return c
+  char_c = str(chr(c))
+  if char_c.lower() not in "qwertyuiopasdfghjklzxzcvbnm":
+    return '.'
+  return char_c
 
 if __name__ == "__main__":
   main(sys.argv)
