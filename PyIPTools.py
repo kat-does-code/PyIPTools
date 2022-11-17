@@ -17,7 +17,7 @@ import atexit
 import os
 
 # Config vars
-block_address_ipv4 = "192.168"
+block_address_ipv4 = "0.0.0.0"
 block_address_ipv6 = "fd00"
 
 block_address_ipv4_bytes = None
@@ -59,28 +59,36 @@ class Answer:
 		self.Address = answer_block[12:self.AnswerLength] if self.DataLength > 0 else ''
 
 class Response(Request):
+	blocked_or_empty = False
+
 	def __init__(self, packet):
 		Request.__init__(self, packet)
 		if self.flags[0] != '1': 
 			raise TypeError("Packet is not a response")
 		answer_block = packet[self.RequestLength:]
 		self.Answers = []
-		while len(answer_block) > 0:
-			answer = Answer(answer_block)
-			answer_block = answer_block[answer.AnswerLength:]
-			self.Answers.append(answer)
+		if len(answer_block) == 0:
+			self.blocked_or_empty = True
+		else:
+			while len(answer_block) > 0:
+				answer = Answer(answer_block)
+				answer_block = answer_block[answer.AnswerLength:]
+				self.Answers.append(answer)
 
 	def is_blocked(self):
+		self.blocked_or_empty = True
 		for a in self.Answers:
-			if a.Type == 1:
-				return a.Address.startswith(block_address_ipv4_bytes)
-				#return (a.Address[0] == '\xc0' and a.Address[1] == '\xa8')
-			elif a.Type == 28:
-				return a.Address.startswith(block_address_ipv6_bytes)
-				#return a.Address[1] == '\x00' and (a.Address[0] == '\xfc' or a.Address[0] == '\xfd')
-		return False
-
-
+			self.blocked_or_empty = not(any(a.Address))
+			if not self.blocked_or_empty:
+				if a.Type == 1:
+					result = a.Address.startswith(block_address_ipv4_bytes.encode())
+					self.blocked_or_empty = result
+					#return (a.Address[0] == '\xc0' and a.Address[1] == '\xa8')
+				elif a.Type == 28:
+					result = a.Address.startswith(block_address_ipv6_bytes.encode())
+					self.blocked_or_empty = result
+					#return a.Address[1] == '\x00' and (a.Address[0] == '\xfc' or a.Address[0] == '\xfd')
+		return self.blocked_or_empty
 
 class MyDict:
 	def __init__(self):
@@ -105,7 +113,7 @@ class MyDict:
 			l.append( [k, self.d[k]['hits'], self.d[k]['lastupdate'], self.d[k]['blocked'] ] )
 		l = sorted(l, key=lambda tpl: (tpl[2]-epoch).total_seconds(), reverse=True )
 		
-		print( "{0}/{1} blocked ({2}%) [{3}]".format(blocks, self.nUrls, int((float(blocks)/self.nUrls)*100) if blocks > 0 else 0, packets_filtered ) )
+		print( "{0}/{1} blocked ({2}%) [DNS packets: {3}]".format(blocks, self.nUrls, int((float(blocks)/self.nUrls)*100) if blocks > 0 else 0, packets_filtered ) )
 		print( bcolors.BOLD + "[{0:26}] [{1:7}] ({2}) | {3}".format("TIMESTAMP", "STATUS", "HITS", "DOMAIN") + bcolors.ENDC )
 		i = -1
 		for line in l:
@@ -253,7 +261,8 @@ def parse_packet(packet) :
 				data = packet[h_size:]
 				r = Response(data)
 				data_mapped = "".join(map(datafilter, r.Query))
-				urldict.hit(data_mapped.strip('.'), r.is_blocked())
+				blocked_or_empty = r.blocked_or_empty or r.is_blocked()
+				urldict.hit(data_mapped.strip('.'), blocked_or_empty)
 			except TypeError as e:
 				print(e)
 				pass

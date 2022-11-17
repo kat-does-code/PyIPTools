@@ -1,0 +1,43 @@
+version: "3.9"
+
+services:
+  pihole:
+    image: pihole/pihole:latest
+    ports:
+      - "53:53"
+      - "67:67"
+      - "80:80"
+      - "443:443"
+    dns:
+      - 127.0.0.1
+      - 1.1.1.1
+    cap_add:
+      - NET_ADMIN
+    restart: unless-stopped
+    networks:
+      nopihole:
+        ipv4_address: 10.5.0.2
+  pyiptools:
+    build: 
+      context: .
+      dockerfile: ./Dockerfile
+    volumes:
+      - ..:/workspace:cached
+    # Overrides default command so things don't shut down after the process ends.
+    command: /bin/sh -c "while sleep 1000; do :; done"
+    depends_on:
+      - pihole
+    networks:
+      nopihole:
+        ipv4_address: 10.5.0.10
+    dns:
+      - 10.5.0.2
+      - 1.1.1.1
+
+networks:
+  nopihole:
+    driver: bridge
+    ipam:
+      config:
+        - subnet: 10.5.0.0/16
+          gateway: 10.5.0.1
